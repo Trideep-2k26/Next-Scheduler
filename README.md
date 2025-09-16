@@ -11,7 +11,11 @@
 </div>
 
 ---
+## Demo Videos
 
+- [Buyer Side Feature](https://www.loom.com/share/28d85b71574949fcae3c4efe9d38a68e?sid=29bff597-407d-40b3-8d68-86600590398e)  
+- [Seller Side Feature](https://www.loom.com/share/2f362a9f4270462fa3a07c383e38300b?sid=56cff009-3ba6-478a-a98a-346300d59918)
+- 
 ## 📌 Overview
 
 **Next-Scheduler** is a full-stack appointment scheduling application designed for real-world production use. It seamlessly connects buyers and sellers through intelligent scheduling, featuring AI assistance, Google Calendar synchronization, and automated email confirmations.
@@ -58,7 +62,7 @@
 - Google Calendar API
 - Google OAuth 2.0
 - Gmail SMTP
-- Gemini AI
+- Gemini AI (2.5 flash lite llm)
 
 </td>
 <td>
