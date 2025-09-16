@@ -1,9 +1,4 @@
 {
-  "build": {
-    "env": {
-      "PRISMA_GENERATE_DATAPROXY": "true"
-    }
-  },
   "functions": {
     "pages/api/**/*.js": {
       "maxDuration": 10
