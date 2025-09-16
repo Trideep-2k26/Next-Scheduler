@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String               @id @default(cuid())
+  name                  String?
+  email                 String               @unique
+  image                 String?
+  role                  String?
+  serviceType           String?
+  refreshTokenEncrypted String?
+  description           String?
+  specialties           String?
+  hourlyRate            Int?
+  currency              String               @default("INR")
+  meetingDuration       Int?
+  isDummy               Boolean              @default(false)
+  createdAt             DateTime             @default(now())
+  accounts              Account[]
+  appointmentsAsBuyer   Appointment[]        @relation("BuyerToAppointments")
+  appointmentsAsSeller  Appointment[]        @relation("SellerToAppointments")
+  sellerAvailability    SellerAvailability[]
+  sellerDateAvailability SellerDateAvailability[]
+  reviewsGiven          Review[]             @relation("ReviewerToReviews")
+  reviewsReceived       Review[]             @relation("SellerToReviews")
+  sellerSlotLocks       SlotLock[]           @relation("SellerSlotLocks")
+  buyerSlotLocks        SlotLock[]           @relation("BuyerSlotLocks")
+}
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  access_token      String?
+  refresh_token     String?
+  scope             String?
+  expires_at        Int?
+  id_token          String?
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerAccountId])
+}
+
+model Appointment {
+  id                 String   @id @default(cuid())
+  title              String
+  sellerId           String
+  buyerId            String
+  start              DateTime
+  end                DateTime
+  duration           Int?
+  timezone           String
+  googleEventId      String?
+  buyerGoogleEventId String?
+  meetLink           String?
+  confirmationEmail  String?  // AI-generated confirmation email content
+  createdAt          DateTime @default(now())
+  buyer              User     @relation("BuyerToAppointments", fields: [buyerId], references: [id])
+  seller             User     @relation("SellerToAppointments", fields: [sellerId], references: [id])
+
+  @@unique([sellerId, start])
+}
+
+model SellerAvailability {
+  id        String   @id @default(cuid())
+  sellerId  String
+  dayOfWeek Int
+  startTime String
+  endTime   String
+  createdAt DateTime @default(now())
+  seller    User     @relation(fields: [sellerId], references: [id])
+}
+
+model SellerDateAvailability {
+  id        String   @id @default(cuid())
+  sellerId  String
+  date      DateTime // Specific date like 2025-09-20
+  startTime String
+  endTime   String
+  createdAt DateTime @default(now())
+  seller    User     @relation(fields: [sellerId], references: [id])
+  
+  @@unique([sellerId, date]) // One availability record per seller per date
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  sellerId  String   
+  reviewerId String  
+  rating    Int      // 1-5 stars
+  comment   String?  // Optional text review
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  seller    User     @relation("SellerToReviews", fields: [sellerId], references: [id], onDelete: Cascade)
+  reviewer  User     @relation("ReviewerToReviews", fields: [reviewerId], references: [id], onDelete: Cascade)
+  
+  @@unique([sellerId, reviewerId]) // One review per buyer-seller pair
+}
+
+model SlotLock {
+  id          String   @id @default(cuid())
+  sellerId    String
+  buyerId     String
+  date        DateTime // exact date of slot
+  startTime   String   // start time (e.g., "10:00")
+  endTime     String   // end time (e.g., "10:30")
+  status      String   // "LOCKED" | "CONFIRMED" | "CANCELLED"
+  expiresAt   DateTime // auto-expiry timestamp
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  seller      User     @relation("SellerSlotLocks", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer       User     @relation("BuyerSlotLocks", fields: [buyerId], references: [id], onDelete: Cascade)
+  
+  @@unique([sellerId, date, startTime, endTime]) // Prevent duplicate locks on same slot
+  @@index([status, expiresAt]) // Index for efficient cleanup queries
+}
