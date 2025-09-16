@@ -1,210 +1,433 @@
-# Next-Scheduler (Frontend)
+# Next-Scheduler 🚀
 
-This README documents the frontend subproject for Next-Scheduler — a production-ready appointment scheduling platform built with Next.js, Supabase, Prisma, Google OAuth/Calendar, and Gmail SMTP. It covers setup, environment variables, deployment on Vercel, and common troubleshooting steps.
-
----
-
-## 1. Project Overview
-
-Next-Scheduler is a full-stack appointment scheduling application. The frontend (this folder) is built with Next.js and contains UI, API routes, and integration points for authentication, AI, and calendar sync. Major capabilities:
-
-- Google OAuth authentication (NextAuth)
-- Buyer & Seller roles (dynamically assigned)
-- Seller availability management (weekly & date-specific)
-- Booking flow with slot locking
-- Confirmation emails via Gmail SMTP
-- Google Calendar sync for created/cancelled events
-- AI assistant endpoint for natural-language scheduling support
-- Deployed on Vercel
+<div align="center">
+  <h3>A Production-Ready AI-Powered Appointment Scheduling Platform</h3>
+  <p>Built with Next.js, Supabase, Google Calendar Integration, and Intelligent AI Assistance</p>
+  
+  [![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
+  [![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?style=for-the-badge&logo=prisma)](https://prisma.io/)
+  [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase)](https://supabase.com/)
+  [![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?style=for-the-badge&logo=vercel)](https://vercel.com/)
+</div>
 
 ---
 
-## 2. Tech Stack
+## 📌 Overview
 
-- Next.js — Frontend & API routes
-- Prisma — Type-safe ORM
-- Supabase (PostgreSQL) — Database
-- NextAuth.js — Authentication (Google provider)
-- Gmail SMTP — Email delivery
-- Google Calendar API — Event sync
-- NodeCache — In-memory caching
-- Cron Jobs — Background tasks
-- Deployment: Vercel
+**Next-Scheduler** is a full-stack appointment scheduling application designed for real-world production use. It seamlessly connects buyers and sellers through intelligent scheduling, featuring AI assistance, Google Calendar synchronization, and automated email confirmations.
 
----
+### 🎯 Key Features
 
-## 3. Features
-
-Implemented features:
-
-- Google OAuth sign-in (NextAuth)
-- Dynamic Buyer / Seller roles
-- Seller availability (weekly and date overrides)
-- Buyer booking flow with slot locking
-- Confirmation emails for both parties
-- Google Calendar integration
-- Responsive UI (mobile and desktop)
-- Dummy-seller seeding scripts for testing
-- NodeCache for AI response caching
-- Cron jobs for cleanup and scheduled tasks
-- Monitoring & performance toggles
-
-Planned features:
-
-- Advanced AI assistant workflows
-- SMS/WhatsApp notifications
-- Analytics dashboards
-- Custom domain & multi-tenant support
+- **🔐 Google OAuth Authentication** - Secure sign-in with role-based access
+- **🤖 AI-Powered Assistant** - Natural language scheduling and intelligent recommendations
+- **📅 Google Calendar Integration** - Automatic event creation and synchronization
+- **📧 Smart Email Notifications** - Automated confirmations with Google Meet links
+- **⚡ Real-Time Slot Locking** - BookMyShow-style booking system
+- **📱 Fully Responsive** - Optimized for mobile and desktop
+- **🚀 Performance Optimized** - Redis caching and background job processing
 
 ---
 
-## 4. Project Structure
+## 🛠️ Technology Stack
 
-Key directories:
+<table>
+<tr>
+<td>
+
+**Frontend & API**
+- Next.js 14
+- React 18
+- Tailwind CSS
+- NextAuth.js
+
+</td>
+<td>
+
+**Backend & Database**
+- Prisma ORM
+- Supabase PostgreSQL
+- Redis Caching
+- Node.js API Routes
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Integrations**
+- Google Calendar API
+- Google OAuth 2.0
+- Gmail SMTP
+- Gemini AI
+
+</td>
+<td>
+
+**Deployment**
+- Vercel Platform
+- Serverless Functions
+- Edge Runtime
+- CI/CD Pipeline
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📂 Project Architecture
 
 ```
-/frontend
-  /components
-  /lib
-  /pages
-    /api
-  /prisma
-  /scripts
-  /styles
-  .env (local only - ignored)
+frontend/
+├── 📁 components/          # Reusable React components
+│   ├── Layout.js          # Application shell & navigation
+│   ├── SlotPicker.js      # Interactive booking calendar
+│   ├── AIChatAssistant.js # AI-powered chat interface
+│   └── ...
+├── 📁 lib/                # Core utilities & services
+│   ├── prisma.js         # Database ORM connection
+│   ├── google.js         # Google APIs integration
+│   ├── emailService.js   # SMTP email handling
+│   └── cache.js          # Performance caching layer
+├── 📁 pages/              # Next.js routing & API
+│   ├── 📁 api/           # Serverless API endpoints
+│   ├── 📁 dashboard/     # User dashboards
+│   ├── 📁 sellers/       # Seller management
+│   └── index.js          # Landing page
+└── 📁 prisma/            # Database schema & migrations
 ```
 
-- `components/` — shared React components
-- `lib/` — helpers and Prisma client
-- `pages/api/` — serverless API endpoints
-- `prisma/` — schema and migrations
-- `scripts/` — seeding and utility scripts
+### 🔌 API Endpoints
+
+| Endpoint | Purpose | Features |
+|----------|---------|----------|
+| `/api/appointments` | Appointment management | CRUD operations, filtering |
+| `/api/slots/*` | Slot management | Locking, availability, booking |
+| `/api/ai/query` | AI assistance | Natural language processing |
+| `/api/sellers` | Seller operations | Availability, profiles |
+| `/api/auth/[...nextauth]` | Authentication | Google OAuth flow |
 
 ---
 
-## 5. Environment Variables
+## ⚙️ Environment Setup
 
-Create `.env.local` for local development and configure production variables in Vercel.
+### 📋 Required Environment Variables
 
-```
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
+Create `.env.local` for development:
+
+```bash
+# Authentication
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
 NEXTAUTH_URL=http://localhost:3000
-NEXTAUTH_SECRET=
+NEXTAUTH_SECRET=your_nextauth_secret_key
 
-DATABASE_URL=postgresql://postgres:<PASSWORD>@<HOST>:<PORT>/postgres?sslmode=require
+# Database
+DATABASE_URL=postgresql://username:password@db.supabase.co:5432/postgres?sslmode=require
 
+# Email Service (Gmail SMTP)
 EMAIL_SERVICE=gmail
-EMAIL_USER=
-EMAIL_PASS=
-EMAIL_FROM=
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASS=your_gmail_app_password
+EMAIL_FROM=noreply@yourapp.com
 
-GEMINI_API_KEY=
-TOKEN_ENCRYPTION_KEY=
+# AI Integration
+GEMINI_API_KEY=your_gemini_api_key
 
+# Security
+TOKEN_ENCRYPTION_KEY=your_32_character_encryption_key
+
+# Performance & Caching
 ENABLE_CACHING=true
 CACHE_DEFAULT_TTL=60
 AI_CACHE_TTL=30
 APPOINTMENTS_CACHE_TTL=300
+
+# Background Jobs
 ENABLE_CRON_JOBS=true
 ENABLE_PERFORMANCE_TRACKING=true
 ```
 
-Notes:
-- Use Gmail App Passwords for `EMAIL_PASS` in production
-- Ensure `NEXTAUTH_URL` matches your deployed domain
-- On Vercel, add all environment variables under Project → Settings → Environment Variables
+### 🔑 Getting API Keys
+
+1. **Google OAuth & Calendar**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing
+   - Enable Google Calendar API and Google+ API
+   - Create OAuth 2.0 credentials
+   - Add authorized domains and redirect URIs
+
+2. **Gmail App Password**:
+   - Enable 2FA on your Google account
+   - Generate an App Password for Gmail
+   - Use this password in `EMAIL_PASS`
+
+3. **Gemini AI**:
+   - Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Generate API key for Gemini
 
 ---
 
-## 6. Setup & Installation (Local)
+## 🚀 Local Development
 
-1. Clone repository and navigate to frontend:
+### 📦 Installation
 
 ```bash
+# Clone the repository
 git clone https://github.com/Trideep-2k26/Next-Scheduler.git
 cd Next-Scheduler/frontend
-```
 
-2. Install dependencies:
-
-```bash
+# Install dependencies
 npm install
-```
 
-3. Create `.env.local` and populate variables from section 5.
+# Setup environment
+cp .env.example .env.local
+# Edit .env.local with your configuration
 
-4. Generate Prisma client & apply migrations:
-
-```bash
+# Initialize database
 npx prisma generate
 npx prisma migrate dev --name init
+
+# Start development server
+npm run dev
 ```
 
-> If working against an existing Supabase DB with data, use `npx prisma db pull` to introspect.
+Open [http://localhost:3000](http://localhost:3000) to view the application.
 
-5. Start development server:
+### 🧪 Development Scripts
 
 ```bash
-npm run dev
-# open http://localhost:3000
+npm run dev          # Start development server
+npm run build        # Build for production
+npm run start        # Start production server
+npm run lint         # Run ESLint
+npm run db:studio    # Open Prisma Studio
+npm run db:reset     # Reset database
+npm run db:seed      # Seed dummy data
 ```
 
 ---
 
-## 7. Deployment (Vercel)
+## 🌐 Production Deployment
 
-1. Connect your GitHub repo to Vercel and create the project.
-2. Add all environment variables in Vercel Project Settings.
-3. Ensure `NEXTAUTH_URL` is set to `https://<your-deployment>.vercel.app`.
-4. In Google Cloud Console, add authorized redirect URIs:
+### Vercel Deployment
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTrideep-2k26%2FNext-Scheduler)
+
+#### Step-by-Step Deployment
+
+1. **Connect Repository**
+   ```bash
+   # Push your code to GitHub
+   git add .
+   git commit -m "Ready for deployment"
+   git push origin main
+   ```
+
+2. **Setup Vercel Project**
+   - Connect your GitHub repository to Vercel
+   - Import the project
+   - Configure build settings:
+     ```json
+     {
+       "buildCommand": "prisma generate && next build",
+       "outputDirectory": ".next",
+       "installCommand": "npm install"
+     }
+     ```
+
+3. **Environment Variables**
+   - Add all environment variables in Vercel dashboard
+   - Update `NEXTAUTH_URL` to your deployment URL:
+     ```
+     NEXTAUTH_URL=https://your-app-name.vercel.app
+     ```
+
+4. **Google OAuth Configuration**
+   - In Google Cloud Console → OAuth 2.0 Client IDs
+   - Add authorized domains:
+     ```
+     vercel.app
+     your-custom-domain.com
+     ```
+   - Add redirect URIs:
+     ```
+     https://your-app-name.vercel.app/api/auth/callback/google
+     ```
+
+### ⚠️ Known Deployment Issues
+
+#### Google OAuth Access Denied
+
+**Issue**: Google OAuth works perfectly in local development but denies access in production deployment.
+
+**Common Causes**:
+- OAuth consent screen is in "Testing" mode
+- Missing authorized domains in Google Cloud Console
+- Incorrect redirect URIs
+- App not verified by Google
+
+**Solutions**:
+
+1. **Publish OAuth Consent Screen**:
+   ```
+   Google Cloud Console → APIs & Services → OAuth consent screen
+   → Set to "Production" (requires verification for sensitive scopes)
+   ```
+
+2. **Add Test Users** (if staying in testing mode):
+   ```
+   OAuth consent screen → Test users → Add email addresses
+   ```
+
+3. **Verify Domain Ownership**:
+   ```
+   Google Search Console → Add and verify your domain
+   Link it to your Google Cloud project
+   ```
+
+4. **Update Authorized Domains**:
+   ```
+   OAuth 2.0 Client → Authorized domains:
+   - vercel.app
+   - your-custom-domain.com (if using custom domain)
+   ```
+
+5. **Complete App Verification** (for production):
+   - Submit app for Google's security review
+   - Provide privacy policy and terms of service
+   - Demonstrate legitimate use of requested scopes
+
+**Temporary Workaround**:
+For immediate testing, add specific user emails to the test users list in Google Cloud Console.
+
+---
+
+## 🎯 Features Overview
+
+### ✅ Implemented Features
+
+- **Authentication System**
+  - Google OAuth 2.0 integration
+  - Dynamic role assignment (Buyer/Seller)
+  - Secure session management
+
+- **Appointment Management**
+  - Real-time slot availability
+  - BookMyShow-style slot locking
+  - Google Calendar synchronization
+  - Email confirmations with Meet links
+
+- **AI Assistant**
+  - Natural language processing
+  - Intelligent scheduling recommendations
+  - Context-aware responses
+  - Cached responses for performance
+
+- **User Experience**
+  - Responsive mobile-first design
+  - Intuitive booking flow
+  - Real-time notifications
+  - Performance optimized
+
+### 🔄 Upcoming Features
+
+- **Enhanced AI Capabilities**
+  - Voice-powered scheduling
+  - Smart availability parsing
+  - Predictive booking suggestions
+
+- **Communication**
+  - SMS/WhatsApp notifications
+  - In-app messaging system
+  - Multi-language support
+
+- **Analytics & Insights**
+  - Booking analytics dashboard
+  - Revenue tracking
+  - User behavior insights
+
+- **Enterprise Features**
+  - Multi-tenant support
+  - Custom branding
+  - Advanced integrations
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues & Solutions
+
+| Issue | Solution |
+|-------|----------|
+| **Prisma Connection Error (P1001)** | Verify `DATABASE_URL` format and network access |
+| **Google OAuth "Unauthorized"** | Check authorized domains and redirect URIs |
+| **Email Delivery Fails** | Use Gmail App Passwords, not regular password |
+| **Build Fails on Vercel** | Ensure `prisma generate` runs before build |
+| **Calendar Events Not Created** | Verify Google Calendar API is enabled |
+
+### Debug Mode
+
+Enable detailed logging:
+
+```bash
+# Add to .env.local
+DEBUG=true
+LOG_LEVEL=verbose
 ```
-https://<your-deployment>.vercel.app/api/auth/callback/google
-http://localhost:3000/api/auth/callback/google
-```
-
-5. Build script should generate Prisma client during build. Example `package.json`:
-
-```json
-"scripts": {
-  "build": "prisma generate && next build",
-  "dev": "next dev -p 3000"
-}
-```
-
-6. Deploy and monitor logs for any Prisma or OAuth errors.
 
 ---
 
-## 8. Known Issues & Fixes
+## 🤝 Contributing
 
-- **Prisma P1001 (Can't reach DB)**: Ensure `DATABASE_URL` is correct and DNS reachable. URL-encode special characters in the password (e.g., `@` → `%40`).
-- **Prisma migrations on existing DB**: Use `prisma migrate resolve` to baseline or use `prisma db pull` to introspect.
-- **Google OAuth "unverified app"**: Add test users or publish OAuth consent screen. Ensure redirect URIs and authorized domains are set.
-- **Email delivery failures**: Use Gmail App Passwords or a robust email provider.
-- **NodeCache in serverless**: It's in-memory and ephemeral — consider Redis for persistence.
+We welcome contributions! Please follow these steps:
+
+1. **Fork the repository**
+2. **Create a feature branch**
+   ```bash
+   git checkout -b feature/amazing-feature
+   ```
+3. **Commit your changes**
+   ```bash
+   git commit -m "Add amazing feature"
+   ```
+4. **Push to the branch**
+   ```bash
+   git push origin feature/amazing-feature
+   ```
+5. **Open a Pull Request**
+
+### Development Guidelines
+
+- Follow ESLint configuration
+- Write meaningful commit messages
+- Add tests for new features
+- Update documentation as needed
+- Never commit `.env` files
 
 ---
 
-## 9. Contributing
+## 📄 License
 
-- Open issues for bugs or features
-- Use feature branches and submit PRs
-- Do not commit secrets (.env)
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 10. License
+## 🙏 Acknowledgments
 
-This project is MIT licensed. See the root `LICENSE` file for details.
+- [Next.js Team](https://nextjs.org/) for the amazing framework
+- [Prisma](https://prisma.io/) for the excellent ORM
+- [Supabase](https://supabase.com/) for managed PostgreSQL
+- [Vercel](https://vercel.com/) for seamless deployment
+- [Google](https://developers.google.com/) for comprehensive APIs
 
 ---
 
-If you want, I can also:
-
-- Add a root-level `README.md` (project-wide) summarizing both frontend and backend
-- Create a `.env.example` with required keys
-- Add a `LICENSE` file with MIT text
-
-Feel free to ask which additional files you want me to add.
+<div align="center">
+  <p>Built with ❤️ by <a href="https://github.com/Trideep-2k26">Trideep</a></p>
+  <p>
+    <a href="https://github.com/Trideep-2k26/Next-Scheduler/issues">Report Bug</a> •
+    <a href="https://github.com/Trideep-2k26/Next-Scheduler/issues">Request Feature</a> •
+    <a href="https://github.com/Trideep-2k26/Next-Scheduler">View Source</a>
+  </p>
+</div>
