@@ -1,12 +1,12 @@
 /**
- * Fast Booking API Controller
+ * Fast Booking API Controller - FIXED VERSION
  * 
  * PERFORMANCE OPTIMIZED for Vercel:
  * 1. Save appointment to DB immediately and return success (< 2s)
  * 2. Process background tasks asynchronously:
  *    - Google Calendar events (buyer & seller)  
  *    - AI email generation with Gemini
- *    - Email sending via Gmail/SendGrid
+ *    - Email sending via Gmail SMTP
  * 3. Background tasks have comprehensive error logging but don't block booking
  */
 
@@ -15,7 +15,10 @@ import { authOptions } from './auth/[...nextauth]'
 import prisma from '../../lib/prisma'
 import { parseISO, format } from 'date-fns'
 import { invalidateByPattern, slotCache } from '../../lib/cache'
-import { processAppointmentBackgroundTasks } from '../../lib/backgroundTasks'
+import { getClientWithRefresh, createEventOnCalendar, createOAuth2Client } from '../../lib/google'
+import { decryptToken } from '../../lib/encryption'
+import { generateConfirmationEmail, validateAppointmentData } from '../../lib/emailAI'
+import { sendConfirmationEmail } from '../../lib/emailService'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -155,24 +158,311 @@ export default async function handler(req, res) {
     })
 
     // BACKGROUND PROCESSING: Start slow tasks asynchronously after response is sent
-    // Using setImmediate to ensure response is fully sent before background tasks start
-    setImmediate(async () => {
-      try {
-        console.log(`[BOOKING] Starting background processing for appointment ${appointment.id}`)
-        const result = await processAppointmentBackgroundTasks(appointment.id)
-        console.log(`[BOOKING] Background processing completed for appointment ${appointment.id}:`, result.status)
-      } catch (error) {
-        // Log errors but don't affect the booking confirmation (already sent to user)
-        console.error(`[BOOKING] Background processing failed for appointment ${appointment.id}:`, error)
-        
-        // In production, you might want to:
-        // 1. Queue for retry with exponential backoff
-        // 2. Send alert to operations team
-        // 3. Create database record for manual follow-up
-        
-        // For now, we just log and continue - booking is still valid
-      }
-    })
+    // Using setImmediate/setTimeout to ensure response is fully sent before background tasks start
+    const scheduleBackgroundTasks = () => {
+      const backgroundPromise = (async () => {
+        try {
+          console.log(`[BACKGROUND] 🚀 Starting background processing for appointment ${appointment.id}`)
+          
+          // Get full appointment data with all relationships for background processing
+          const fullAppointment = await prisma.appointment.findUnique({
+            where: { id: appointment.id },
+            include: {
+              seller: {
+                select: { 
+                  id: true, 
+                  name: true, 
+                  email: true, 
+                  refreshTokenEncrypted: true,
+                  serviceType: true
+                }
+              },
+              buyer: {
+                select: { 
+                  id: true, 
+                  name: true, 
+                  email: true 
+                },
+                include: { accounts: true }
+              }
+            }
+          })
+
+          if (!fullAppointment) {
+            console.error(`[BACKGROUND] ❌ Appointment ${appointment.id} not found for background processing`)
+            return
+          }
+
+          console.log(`[BACKGROUND] 📄 Processing appointment: ${fullAppointment.title}`)
+          console.log(`[BACKGROUND] 👤 Seller: ${fullAppointment.seller.name} (${fullAppointment.seller.email})`)
+          console.log(`[BACKGROUND] 👤 Buyer: ${fullAppointment.buyer.name} (${fullAppointment.buyer.email})`)
+
+          let sellerEventId = null
+          let buyerEventId = null
+          let meetLink = null
+          let tasksCompleted = 0
+          const totalTasks = 4
+
+          // TASK 1: Create seller calendar event
+          if (fullAppointment.seller.refreshTokenEncrypted) {
+            try {
+              console.log(`[BACKGROUND] 📅 Creating seller calendar event...`)
+              
+              const refreshToken = decryptToken(fullAppointment.seller.refreshTokenEncrypted)
+              if (refreshToken) {
+                const sellerClient = getClientWithRefresh(refreshToken)
+                
+                const sellerEventResource = {
+                  summary: fullAppointment.title,
+                  start: {
+                    dateTime: fullAppointment.start.toISOString(),
+                    timeZone: fullAppointment.timezone || 'UTC'
+                  },
+                  end: {
+                    dateTime: fullAppointment.end.toISOString(),
+                    timeZone: fullAppointment.timezone || 'UTC'
+                  },
+                  attendees: [
+                    { email: fullAppointment.buyer.email }
+                  ],
+                  conferenceData: {
+                    createRequest: {
+                      requestId: `meet-seller-${fullAppointment.id}-${Date.now()}`,
+                      conferenceSolutionKey: {
+                        type: 'hangoutsMeet'
+                      }
+                    }
+                  },
+                  description: `Meeting with ${fullAppointment.buyer.name}\n\nBooking ID: ${fullAppointment.id}`
+                }
+                
+                console.log(`[BACKGROUND] 🔄 Calling Google Calendar API for seller...`)
+                const sellerEvent = await createEventOnCalendar(sellerClient, 'primary', sellerEventResource)
+                sellerEventId = sellerEvent.id
+                meetLink = sellerEvent.hangoutLink || sellerEvent.conferenceData?.entryPoints?.[0]?.uri
+                tasksCompleted++
+                
+                console.log(`[BACKGROUND] ✅ Seller calendar event created: ${sellerEventId}`)
+                if (meetLink) console.log(`[BACKGROUND] ✅ Meet link generated: ${meetLink}`)
+              } else {
+                console.log(`[BACKGROUND] ⚠️  Could not decrypt seller refresh token`)
+              }
+            } catch (error) {
+              console.error(`[BACKGROUND] ❌ Seller calendar failed:`, error.message)
+              console.error(`[BACKGROUND] ❌ Seller error details:`, {
+                message: error.message,
+                code: error.code,
+                status: error.status
+              })
+            }
+          } else {
+            console.log(`[BACKGROUND] ⚠️  No seller refresh token - skipping seller calendar`)
+          }
+
+          // TASK 2: Create buyer calendar event  
+          const buyerAccount = fullAppointment.buyer.accounts?.find(acc => acc.provider === 'google')
+          if (buyerAccount) {
+            try {
+              console.log(`[BACKGROUND] 📅 Creating buyer calendar event...`)
+              console.log(`[BACKGROUND] 🔑 Buyer has Google account with access_token: ${!!buyerAccount.access_token}, refresh_token: ${!!buyerAccount.refresh_token}`)
+              
+              const buyerClient = createOAuth2Client()
+              
+              // Set credentials with both access_token and refresh_token if available
+              const credentials = {}
+              if (buyerAccount.access_token) {
+                credentials.access_token = buyerAccount.access_token
+              }
+              if (buyerAccount.refresh_token) {
+                credentials.refresh_token = buyerAccount.refresh_token
+              }
+              
+              buyerClient.setCredentials(credentials)
+              
+              const buyerEventResource = {
+                summary: fullAppointment.title,
+                start: {
+                  dateTime: fullAppointment.start.toISOString(),
+                  timeZone: fullAppointment.timezone || 'UTC'
+                },
+                end: {
+                  dateTime: fullAppointment.end.toISOString(),
+                  timeZone: fullAppointment.timezone || 'UTC'
+                },
+                attendees: [
+                  { email: fullAppointment.seller.email }
+                ],
+                description: `Meeting with ${fullAppointment.seller.name}${meetLink ? `\n\nJoin meeting: ${meetLink}` : ''}\n\nBooking ID: ${fullAppointment.id}`,
+                // Only create meet link if seller didn't create one
+                ...((!meetLink) && {
+                  conferenceData: {
+                    createRequest: {
+                      requestId: `meet-buyer-${fullAppointment.id}-${Date.now()}`,
+                      conferenceSolutionKey: {
+                        type: 'hangoutsMeet'
+                      }
+                    }
+                  }
+                })
+              }
+              
+              console.log(`[BACKGROUND] 🔄 Calling Google Calendar API for buyer...`)
+              const buyerEvent = await createEventOnCalendar(buyerClient, 'primary', buyerEventResource)
+              buyerEventId = buyerEvent.id
+              tasksCompleted++
+              
+              // Use buyer's meet link if seller didn't create one
+              if (!meetLink) {
+                meetLink = buyerEvent.hangoutLink || buyerEvent.conferenceData?.entryPoints?.[0]?.uri
+                if (meetLink) console.log(`[BACKGROUND] ✅ Meet link from buyer: ${meetLink}`)
+              }
+              
+              console.log(`[BACKGROUND] ✅ Buyer calendar event created: ${buyerEventId}`)
+              
+            } catch (error) {
+              console.error(`[BACKGROUND] ❌ Buyer calendar failed:`, error.message)
+              console.error(`[BACKGROUND] ❌ Buyer error details:`, {
+                message: error.message,
+                code: error.code,
+                status: error.status
+              })
+              
+              // Try fallback with refresh token only if access token failed
+              if (error.code === 401 && buyerAccount.refresh_token) {
+                try {
+                  console.log(`[BACKGROUND] 🔄 Retrying buyer calendar with refresh token...`)
+                  
+                  const buyerClient = getClientWithRefresh(buyerAccount.refresh_token)
+                  
+                  const buyerEventResource = {
+                    summary: fullAppointment.title,
+                    start: {
+                      dateTime: fullAppointment.start.toISOString(),
+                      timeZone: fullAppointment.timezone || 'UTC'
+                    },
+                    end: {
+                      dateTime: fullAppointment.end.toISOString(),
+                      timeZone: fullAppointment.timezone || 'UTC'
+                    },
+                    attendees: [
+                      { email: fullAppointment.seller.email }
+                    ],
+                    description: `Meeting with ${fullAppointment.seller.name}${meetLink ? `\n\nJoin meeting: ${meetLink}` : ''}\n\nBooking ID: ${fullAppointment.id}`
+                  }
+                  
+                  const buyerEvent = await createEventOnCalendar(buyerClient, 'primary', buyerEventResource)
+                  buyerEventId = buyerEvent.id
+                  tasksCompleted++
+                  
+                  console.log(`[BACKGROUND] ✅ Buyer calendar event created with refresh token: ${buyerEventId}`)
+                  
+                } catch (retryError) {
+                  console.error(`[BACKGROUND] ❌ Buyer calendar retry also failed:`, retryError.message)
+                }
+              }
+            }
+          } else {
+            console.log(`[BACKGROUND] ⚠️  No buyer Google account found - skipping buyer calendar`)
+          }
+
+          // TASK 3: Update appointment with calendar data
+          if (sellerEventId || buyerEventId || meetLink) {
+            try {
+              console.log(`[BACKGROUND] 💾 Updating appointment with calendar data...`)
+              await prisma.appointment.update({
+                where: { id: fullAppointment.id },
+                data: {
+                  ...(sellerEventId && { googleEventId: sellerEventId }),
+                  ...(buyerEventId && { buyerGoogleEventId: buyerEventId }),
+                  ...(meetLink && { meetLink })
+                }
+              })
+              tasksCompleted++
+              console.log(`[BACKGROUND] ✅ Appointment updated with calendar data`)
+            } catch (error) {
+              console.error(`[BACKGROUND] ❌ Failed to update appointment:`, error.message)
+            }
+          }
+
+          // TASK 4: Generate and send confirmation email
+          try {
+            console.log(`[BACKGROUND] 📧 Generating and sending confirmation email...`)
+            
+            // Prepare appointment data for email generation
+            const appointmentData = {
+              sellerName: fullAppointment.seller.name,
+              buyerName: fullAppointment.buyer.name,
+              startTime: fullAppointment.start,
+              timezone: fullAppointment.timezone,
+              serviceType: fullAppointment.seller.serviceType,
+              meetLink: meetLink,
+              title: fullAppointment.title
+            }
+            
+            console.log(`[BACKGROUND] 🤖 Calling AI email generation...`)
+            validateAppointmentData(appointmentData)
+            const emailContent = await generateConfirmationEmail(appointmentData)
+            
+            console.log(`[BACKGROUND] 📤 Sending email to ${fullAppointment.buyer.email}...`)
+            const emailResult = await sendConfirmationEmail(
+              fullAppointment.buyer.email,
+              emailContent.subject,
+              emailContent.body
+            )
+            
+            if (emailResult.success) {
+              console.log(`[BACKGROUND] ✅ Confirmation email sent successfully to ${fullAppointment.buyer.email}`)
+              console.log(`[BACKGROUND] ✅ Email message ID: ${emailResult.messageId}`)
+              tasksCompleted++
+              
+              // Save email content to database for audit trail
+              await prisma.appointment.update({
+                where: { id: fullAppointment.id },
+                data: { confirmationEmail: JSON.stringify(emailContent) }
+              })
+              console.log(`[BACKGROUND] ✅ Email content saved to database`)
+            } else {
+              throw new Error(`Email sending failed: ${emailResult.error}`)
+            }
+            
+          } catch (error) {
+            console.error(`[BACKGROUND] ❌ Email processing failed:`, error.message)
+            console.error(`[BACKGROUND] ❌ Email error details:`, {
+              message: error.message,
+              stack: error.stack
+            })
+          }
+
+          // FINAL: Log completion status
+          const successRate = (tasksCompleted / totalTasks * 100).toFixed(1)
+          console.log(`[BACKGROUND] 📊 Background processing completed: ${tasksCompleted}/${totalTasks} tasks (${successRate}%)`)
+          
+          if (tasksCompleted === totalTasks) {
+            console.log(`[BACKGROUND] 🎉 All background tasks completed successfully for appointment ${fullAppointment.id}`)
+          } else if (tasksCompleted >= 2) {
+            console.log(`[BACKGROUND] 😊 Most background tasks completed for appointment ${fullAppointment.id}`)
+          } else {
+            console.log(`[BACKGROUND] 😟 Background processing had issues for appointment ${fullAppointment.id}`)
+          }
+          
+        } catch (error) {
+          console.error(`[BACKGROUND] 💥 Critical error in background processing for appointment ${appointment.id}:`, error)
+          console.error(`[BACKGROUND] 💥 Error stack:`, error.stack)
+        }
+      })()
+      
+      // Don't await - let it run in background
+      backgroundPromise.catch(error => {
+        console.error(`[BACKGROUND] � Unhandled error in background processing:`, error)
+      })
+    }
+    
+    // Try setImmediate first, fallback to setTimeout for Vercel compatibility  
+    if (typeof setImmediate !== 'undefined') {
+      setImmediate(scheduleBackgroundTasks)
+    } else {
+      setTimeout(scheduleBackgroundTasks, 0)
+    }
 
   } catch (error) {
     console.error('[BOOKING] Error during fast booking:', error)
