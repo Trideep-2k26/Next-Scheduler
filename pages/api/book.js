@@ -1,21 +1,21 @@
 /**
- * Booking API Controller
- * Handles appointment booking functionality including:
- * - Creating appointments in database
- * - Creating calendar events for both buyer and seller
- * - Sending confirmation emails
- * - Cache invalidation
+ * Fast Booking API Controller
+ * 
+ * PERFORMANCE OPTIMIZED for Vercel:
+ * 1. Save appointment to DB immediately and return success (< 2s)
+ * 2. Process background tasks asynchronously:
+ *    - Google Calendar events (buyer & seller)  
+ *    - AI email generation with Gemini
+ *    - Email sending via Gmail/SendGrid
+ * 3. Background tasks have comprehensive error logging but don't block booking
  */
 
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from './auth/[...nextauth]'
 import prisma from '../../lib/prisma'
-import { getClientWithRefresh, createEventOnCalendar, createOAuth2Client } from '../../lib/google'
-import { decryptToken } from '../../lib/encryption'
 import { parseISO, format } from 'date-fns'
-import { generateConfirmationEmail, validateAppointmentData } from '../../lib/emailAI'
-import { sendConfirmationEmail } from '../../lib/emailService'
 import { invalidateByPattern, slotCache } from '../../lib/cache'
+import { processAppointmentBackgroundTasks } from '../../lib/backgroundTasks'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -34,8 +34,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
 
+  const startTime = Date.now() // Track response time
+  
   try {
-    // Get seller info
+    console.log(`[BOOKING] Starting fast booking flow for seller ${sellerId}`)
+    
+    // Fast validation: Get seller info (minimal fields needed for booking)
     const seller = await prisma.user.findUnique({
       where: { id: sellerId },
       select: {
@@ -43,7 +47,7 @@ export default async function handler(req, res) {
         name: true,
         email: true,
         role: true,
-        refreshTokenEncrypted: true
+        meetingDuration: true
       }
     })
 
@@ -51,222 +55,52 @@ export default async function handler(req, res) {
       return res.status(404).json({ message: 'Seller not found' })
     }
 
-    // Get buyer info
+    // Fast validation: Get buyer info (minimal fields needed for booking)
     const buyer = await prisma.user.findUnique({
       where: { id: session.user.id },
-      include: { accounts: true }
+      select: {
+        id: true,
+        name: true,
+        email: true
+      }
     })
 
     if (!buyer) {
       return res.status(404).json({ message: 'Buyer not found' })
     }
 
-    const startTime = parseISO(start)
-    const endTime = parseISO(end)
+    const startDateTime = parseISO(start)
+    const endDateTime = parseISO(end)
 
-    // Check for existing appointment at this time (prevent double booking)
+    // Fast check: Prevent double booking (critical for data integrity)
     const existingAppointment = await prisma.appointment.findFirst({
       where: {
         sellerId,
-        start: startTime
+        start: startDateTime
       }
     })
 
     if (existingAppointment) {
       return res.status(409).json({ 
         message: 'Time slot no longer available',
-        suggestions: [] // Could implement suggestion logic here
+        suggestions: []
       })
     }
 
-    let sellerEventId = null
-    let buyerEventId = null
-    let meetLink = null
-
-    // Create event on seller's calendar
-    if (seller.refreshTokenEncrypted) {
-      try {
-        console.log('Creating seller calendar event...')
-        const refreshToken = decryptToken(seller.refreshTokenEncrypted)
-        if (refreshToken) {
-          const sellerClient = getClientWithRefresh(refreshToken)
-          
-          const eventResource = {
-            summary: title,
-            start: {
-              dateTime: start,
-              timeZone: timezone || 'UTC'
-            },
-            end: {
-              dateTime: end,
-              timeZone: timezone || 'UTC'
-            },
-            attendees: [
-              { email: buyer.email }
-            ],
-            conferenceData: {
-              createRequest: {
-                requestId: `meet-${Date.now()}`,
-                conferenceSolutionKey: {
-                  type: 'hangoutsMeet'
-                }
-              }
-            },
-            description: `Meeting with ${buyer.name}`
-          }
-          
-          const sellerEvent = await createEventOnCalendar(
-            sellerClient, 
-            'primary', 
-            eventResource
-          )
-          
-          sellerEventId = sellerEvent.id
-          meetLink = sellerEvent.hangoutLink || sellerEvent.conferenceData?.entryPoints?.[0]?.uri
-          console.log(`Successfully created seller calendar event: ${sellerEventId}`)
-          console.log(`Generated Meet link: ${meetLink}`)
-        }
-      } catch (error) {
-        console.error('Error creating seller event:', error)
-        console.warn('IMPORTANT: Seller calendar event could not be created. Appointment will still be saved.')
-      }
-    } else {
-      console.warn('IMPORTANT: No refresh token found for seller. Seller calendar event cannot be created.')
-    }
-
-    // Create event on buyer's calendar
-    const buyerAccount = buyer.accounts.find(acc => acc.provider === 'google')
-    if (buyerAccount) {
-      try {
-        console.log('Creating buyer calendar event...')
-        const buyerClient = createOAuth2Client()
-        
-        // Set credentials with both access_token and refresh_token if available
-        const credentials = {}
-        if (buyerAccount.access_token) {
-          credentials.access_token = buyerAccount.access_token
-        }
-        if (buyerAccount.refresh_token) {
-          credentials.refresh_token = buyerAccount.refresh_token
-        }
-        
-        buyerClient.setCredentials(credentials)
-        
-        const eventResource = {
-          summary: title,
-          start: {
-            dateTime: start,
-            timeZone: timezone || 'UTC'
-          },
-          end: {
-            dateTime: end,
-            timeZone: timezone || 'UTC'
-          },
-          attendees: [
-            { email: seller.email }
-          ],
-          description: `Meeting with ${seller.name}${meetLink ? `\n\nJoin meeting: ${meetLink}` : ''}`,
-          conferenceData: meetLink ? undefined : {
-            createRequest: {
-              requestId: `meet-buyer-${Date.now()}`,
-              conferenceSolutionKey: {
-                type: 'hangoutsMeet'
-              }
-            }
-          }
-        }
-        
-        // If seller created a meet link, use it; otherwise create one for buyer
-        if (!meetLink) {
-          eventResource.conferenceData = {
-            createRequest: {
-              requestId: `meet-buyer-${Date.now()}`,
-              conferenceSolutionKey: {
-                type: 'hangoutsMeet'
-              }
-            }
-          }
-        }
-        
-        const buyerEvent = await createEventOnCalendar(
-          buyerClient, 
-          'primary', 
-          eventResource
-        )
-        
-        buyerEventId = buyerEvent.id
-        console.log(`Successfully created buyer calendar event: ${buyerEventId}`)
-        
-        // If buyer's event generated a meet link and seller didn't have one, use buyer's
-        if (!meetLink && (buyerEvent.hangoutLink || buyerEvent.conferenceData?.entryPoints?.[0]?.uri)) {
-          meetLink = buyerEvent.hangoutLink || buyerEvent.conferenceData?.entryPoints?.[0]?.uri
-        }
-      } catch (error) {
-        console.error('Error creating buyer event:', error)
-        
-        // If access token expired, try with refresh token only
-        if (error.code === 401 && buyerAccount.refresh_token) {
-          try {
-            console.log('Access token expired, trying with refresh token for buyer calendar...')
-            const buyerClient = getClientWithRefresh(buyerAccount.refresh_token)
-            
-            const eventResource = {
-              summary: title,
-              start: {
-                dateTime: start,
-                timeZone: timezone || 'UTC'
-              },
-              end: {
-                dateTime: end,
-                timeZone: timezone || 'UTC'
-              },
-              attendees: [
-                { email: seller.email }
-              ],
-              description: `Meeting with ${seller.name}${meetLink ? `\n\nJoin meeting: ${meetLink}` : ''}`
-            }
-            
-            const buyerEvent = await createEventOnCalendar(
-              buyerClient, 
-              'primary', 
-              eventResource
-            )
-            
-            buyerEventId = buyerEvent.id
-            console.log(`Successfully created buyer calendar event with refresh token: ${buyerEventId}`)
-          } catch (refreshError) {
-            console.error('Error creating buyer event with refresh token:', refreshError)
-            // Continue without buyer calendar event but log the issue
-            console.warn('IMPORTANT: Buyer calendar event could not be created. Appointment will still be saved.')
-          }
-        } else {
-          // Continue without buyer calendar event but log the issue
-          console.warn('IMPORTANT: Buyer calendar event could not be created. Appointment will still be saved.')
-        }
-      }
-    } else {
-      console.warn('IMPORTANT: No Google account found for buyer. Buyer calendar event cannot be created.')
-    }
-
-    // Get seller's meeting duration
-    const sellerDuration = await prisma.user.findUnique({
-      where: { id: sellerId },
-      select: { meetingDuration: true }
-    })
-
-    // Save appointment to database
+    // CRITICAL: Save appointment to database IMMEDIATELY (fast operation < 500ms)
     const appointment = await prisma.appointment.create({
       data: {
         title,
         sellerId,
         buyerId: session.user.id,
-        start: startTime,
-        end: endTime,
-        duration: sellerDuration?.meetingDuration || 30,
+        start: startDateTime,
+        end: endDateTime,
+        duration: seller.meetingDuration || 30,
         timezone: timezone || 'UTC',
-        googleEventId: sellerEventId,
-        buyerGoogleEventId: buyerEventId,
-        meetLink
+        // Calendar events and meet link will be added by background tasks
+        googleEventId: null,
+        buyerGoogleEventId: null,
+        meetLink: null
       },
       include: {
         seller: {
@@ -278,9 +112,9 @@ export default async function handler(req, res) {
       }
     })
 
-    // Invalidate related caches after successful booking
-    const dateStr = format(startTime, 'yyyy-MM-dd')
-    const timeStr = format(startTime, 'HH:mm')
+    // Fast cache operations (< 100ms total)
+    const dateStr = format(startDateTime, 'yyyy-MM-dd')
+    const timeStr = format(startDateTime, 'HH:mm')
     
     // Clear availability cache for this seller and date
     invalidateByPattern(`availability:${sellerId}:${dateStr}`)
@@ -297,94 +131,64 @@ export default async function handler(req, res) {
       appointmentId: appointment.id
     }, 86400) // Keep confirmed status for 24 hours
 
-    console.log('Appointment created successfully:')
-    console.log(`- Appointment ID: ${appointment.id}`)
-    console.log(`- Seller Event ID: ${sellerEventId || 'NOT CREATED'}`)
-    console.log(`- Buyer Event ID: ${buyerEventId || 'NOT CREATED'}`)
-    console.log(`- Meet Link: ${meetLink || 'NOT GENERATED'}`)
-    console.log(`- Caches invalidated for seller: ${sellerId}, buyer: ${session.user.id}`)
+    const responseTime = Date.now() - startTime
+    console.log(`[BOOKING] Appointment ${appointment.id} saved successfully in ${responseTime}ms`)
 
-    // Generate and send confirmation email
-    let emailResult = null
-    let confirmationEmailContent = null
-    
-    try {
-      console.log('Generating confirmation email...')
-      
-      // Prepare appointment data for email generation
-      const appointmentData = {
-        sellerName: appointment.seller.name,
-        buyerName: appointment.buyer.name,
-        startTime: appointment.start,
-        timezone: appointment.timezone,
-        serviceType: appointment.seller.serviceType,
-        meetLink: appointment.meetLink,
-        title: appointment.title
-      }
-      
-      // Validate appointment data
-      validateAppointmentData(appointmentData)
-      
-      // Generate template confirmation email
-      const emailContent = await generateConfirmationEmail(appointmentData)
-      confirmationEmailContent = JSON.stringify(emailContent)
-      
-      console.log('Confirmation email generated successfully')
-      console.log(`- Subject: ${emailContent.subject}`)
-      
-      // Send the confirmation email
-      emailResult = await sendConfirmationEmail(
-        appointment.buyer.email,
-        emailContent.subject,
-        emailContent.body
-      )
-      
-      if (emailResult.success) {
-        console.log('Confirmation email sent successfully:', {
-          messageId: emailResult.messageId,
-          to: emailResult.to,
-          subject: emailResult.subject
-        })
-      }
-      
-    } catch (emailError) {
-      console.error('Error in email generation/sending process:', emailError)
-      // Don't fail the booking if email fails - just log it
-    }
-    
-    // Update appointment with confirmation email content for audit trail
-    if (confirmationEmailContent) {
-      try {
-        await prisma.appointment.update({
-          where: { id: appointment.id },
-          data: { confirmationEmail: confirmationEmailContent }
-        })
-        console.log('Confirmation email content saved to database')
-      } catch (updateError) {
-        console.error('Error saving confirmation email to database:', updateError)
-      }
-    }
-
+    // CRITICAL: Return success response immediately (before background tasks)
+    // This ensures users get confirmation in < 2 seconds
     res.status(201).json({
-      appointment,
-      meetLink,
-      calendarEvents: {
-        seller: !!sellerEventId,
-        buyer: !!buyerEventId
+      success: true,
+      appointment: {
+        id: appointment.id,
+        title: appointment.title,
+        start: appointment.start,
+        end: appointment.end,
+        seller: appointment.seller,
+        buyer: appointment.buyer
       },
-      emailSent: emailResult?.success || false
+      message: 'Booking confirmed! Calendar invites and confirmation email will be sent shortly.',
+      processingTime: responseTime,
+      backgroundTasks: {
+        status: 'queued',
+        tasks: ['calendar_events', 'email_notification']
+      }
     })
+
+    // BACKGROUND PROCESSING: Start slow tasks asynchronously after response is sent
+    // Using setImmediate to ensure response is fully sent before background tasks start
+    setImmediate(async () => {
+      try {
+        console.log(`[BOOKING] Starting background processing for appointment ${appointment.id}`)
+        const result = await processAppointmentBackgroundTasks(appointment.id)
+        console.log(`[BOOKING] Background processing completed for appointment ${appointment.id}:`, result.status)
+      } catch (error) {
+        // Log errors but don't affect the booking confirmation (already sent to user)
+        console.error(`[BOOKING] Background processing failed for appointment ${appointment.id}:`, error)
+        
+        // In production, you might want to:
+        // 1. Queue for retry with exponential backoff
+        // 2. Send alert to operations team
+        // 3. Create database record for manual follow-up
+        
+        // For now, we just log and continue - booking is still valid
+      }
+    })
+
   } catch (error) {
-    console.error('Error booking appointment:', error)
+    console.error('[BOOKING] Error during fast booking:', error)
     
     if (error.code === 'P2002') {
-      // Unique constraint violation
+      // Unique constraint violation (race condition in double booking check)
       return res.status(409).json({ 
         message: 'Time slot no longer available',
         suggestions: []
       })
     }
     
-    res.status(500).json({ message: 'Internal server error' })
+    res.status(500).json({ 
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    })
   }
 }
+
