@@ -145,22 +145,33 @@ export default async function handler(req, res) {
   try {
     console.log(`AI Query from ${session.user.email}: "${query}"`)
 
-    // Create cache key for AI query
-    const cacheData = { query, conversationHistory, userName: session.user.name }
-    const cacheKey = `ai_query:${hashKey(JSON.stringify(cacheData))}`
+    const requestStartTime = Date.now()
 
-    // Try to get cached response first
-    const cachedResponse = await getCached(
-      cacheKey,
-      async () => {
-        console.log('Calling Gemini API (cache miss)')
-        return await callLLM(query, conversationHistory, session.user.name)
-      },
-      30, // 30 second TTL for AI responses
-      aiCache
-    )
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('AI Query timeout')), 8500)
+    })
 
-    const llmResponse = cachedResponse
+    const processQueryPromise = (async () => {
+      const cacheData = { query, conversationHistory, userName: session.user.name }
+      const cacheKey = `ai_query:${hashKey(JSON.stringify(cacheData))}`
+
+      const cachedResponse = await getCached(
+        cacheKey,
+        async () => {
+          console.log('Calling Gemini API (cache miss)')
+          return await callLLM(query, conversationHistory, session.user.name)
+        },
+        30,
+        aiCache
+      )
+
+      return cachedResponse
+    })()
+
+    const llmResponse = await Promise.race([processQueryPromise, timeoutPromise])
+    
+    const responseTime = Date.now() - requestStartTime
+    console.log(`AI Query processed in ${responseTime}ms`)
     console.log('LLM Response:', llmResponse)
 
     // Handle different response types
@@ -556,6 +567,21 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('AI Query Error:', error)
+    
+    if (error.message === 'AI Query timeout') {
+      return res.status(200).json({
+        type: 'help',
+        message: "I'm experiencing high load right now. How can I help you with booking appointments or using Next Scheduler?",
+        helpType: 'timeout_fallback',
+        suggestions: [
+          "How do I book an appointment?",
+          "What services are available?",
+          "Contact support information",
+          "Tell me about the platform"
+        ]
+      })
+    }
+    
     res.status(500).json({ 
       message: 'Sorry, I encountered an error processing your request. Please try again.',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -591,11 +617,16 @@ async function callLLM(userQuery, conversationHistory = [], userName = 'User') {
 
     console.log('Sending request to Gemini with prompt length:', fullPrompt.length)
 
-    const result = await model.generateContent([
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Gemini API timeout')), 7000)
+    })
+
+    const geminiPromise = model.generateContent([
       { text: systemPrompt },
       { text: fullPrompt }
     ])
 
+    const result = await Promise.race([geminiPromise, timeoutPromise])
     const response = await result.response
     const text = response.text()
     

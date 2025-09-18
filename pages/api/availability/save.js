@@ -30,25 +30,32 @@ export default async function handler(req, res) {
     const { availability } = req.body
     if (!Array.isArray(availability)) return res.status(400).json({ message: 'Invalid payload' })
 
-    
-    const results = []
-    for (const day of availability) {
-      const { dayOfWeek, startTime, endTime, enabled } = day
-      if (enabled) {
-        const id = `${session.user.id}-${dayOfWeek}`
-        const upserted = await prisma.sellerAvailability.upsert({
+    const enabledDays = availability.filter(day => day.enabled)
+    const disabledDays = availability.filter(day => !day.enabled).map(day => day.dayOfWeek)
+
+    const operations = []
+
+    if (disabledDays.length > 0) {
+      operations.push(
+        prisma.sellerAvailability.deleteMany({
+          where: { sellerId: session.user.id, dayOfWeek: { in: disabledDays } }
+        })
+      )
+    }
+
+    enabledDays.forEach(day => {
+      const { dayOfWeek, startTime, endTime } = day
+      const id = `${session.user.id}-${dayOfWeek}`
+      operations.push(
+        prisma.sellerAvailability.upsert({
           where: { id },
-          update: { startTime, endTime, dayOfWeek, sellerId: session.user.id },
+          update: { startTime, endTime },
           create: { id, sellerId: session.user.id, dayOfWeek, startTime, endTime }
         })
-        results.push(upserted)
-      } else {
-        
-        await prisma.sellerAvailability.deleteMany({
-          where: { sellerId: session.user.id, dayOfWeek }
-        })
-      }
-    }
+      )
+    })
+
+    const results = await Promise.all(operations)
 
     res.status(200).json({ message: 'Availability saved', results })
   } catch (error) {

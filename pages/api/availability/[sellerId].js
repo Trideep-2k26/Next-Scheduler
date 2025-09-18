@@ -77,7 +77,13 @@ export default async function handler(req, res) {
       try {
         const refreshToken = decryptToken(seller.refreshTokenEncrypted)
         if (refreshToken) {
-          const googleBusySlots = await fetchFreeBusy(refreshToken, timeMin, timeMax)
+          const timeout = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Google Calendar timeout')), 3000)
+          })
+          
+          const googleCalendarPromise = fetchFreeBusy(refreshToken, timeMin, timeMax)
+          
+          const googleBusySlots = await Promise.race([googleCalendarPromise, timeout])
           busySlots = [...busySlots, ...googleBusySlots]
         }
       } catch (error) {
