@@ -259,54 +259,6 @@ npm run db:seed      # Seed dummy data
      https://your-app-name.vercel.app/api/auth/callback/google
      ```
 
-### ⚠️ Known Deployment Issues
-
-#### Google OAuth Access Denied
-
-**Issue**: Google OAuth works perfectly in local development but denies access in production deployment.
-
-**Common Causes**:
-- OAuth consent screen is in "Testing" mode
-- Missing authorized domains in Google Cloud Console
-- Incorrect redirect URIs
-- App not verified by Google
-
-**Solutions**:
-
-1. **Publish OAuth Consent Screen**:
-   ```
-   Google Cloud Console → APIs & Services → OAuth consent screen
-   → Set to "Production" (requires verification for sensitive scopes)
-   ```
-
-2. **Add Test Users** (if staying in testing mode):
-   ```
-   OAuth consent screen → Test users → Add email addresses
-   ```
-
-3. **Verify Domain Ownership**:
-   ```
-   Google Search Console → Add and verify your domain
-   Link it to your Google Cloud project
-   ```
-
-4. **Update Authorized Domains**:
-   ```
-   OAuth 2.0 Client → Authorized domains:
-   - vercel.app
-   - your-custom-domain.com (if using custom domain)
-   ```
-
-5. **Complete App Verification** (for production):
-   - Submit app for Google's security review
-   - Provide privacy policy and terms of service
-   - Demonstrate legitimate use of requested scopes
-
-**Temporary Workaround**:
-For immediate testing, add specific user emails to the test users list in Google Cloud Console.
-
----
-
 ## 🎯 Features Overview
 
 ### ✅ Implemented Features
