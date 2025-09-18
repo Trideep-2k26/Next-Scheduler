@@ -49,12 +49,9 @@ export default async function handler(req, res) {
 
     const buyer = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: {
-        id: true,
-        name: true,
-        email: true
-      },
-      include: { accounts: true }
+      include: { 
+        accounts: true 
+      }
     })
 
     if (!buyer) {
